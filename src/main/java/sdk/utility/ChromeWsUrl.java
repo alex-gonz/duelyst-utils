@@ -7,7 +7,7 @@ public class ChromeWsUrl {
 	
 	public ChromeWsUrl(String id, String title, String url) {
 		this.id = id;
-		this.title = "beta.duelyst.com";
+		this.title = title;
 		this.url = url;
 	}
 }
