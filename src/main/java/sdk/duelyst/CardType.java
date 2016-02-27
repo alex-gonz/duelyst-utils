@@ -1,0 +1,6 @@
+package sdk.duelyst;
+
+public enum CardType {
+	ARTIFACT, GENERAL, MINION, SPELL,
+	ARCANYST, DERVISH, GOLEM, MECH, STRUCTURE, VESPYR
+}
