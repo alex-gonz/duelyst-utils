@@ -1,4 +1,4 @@
-package sdk.duelyst.console;
+package sdk.duelyst.console.message;
 
 import sdk.duelyst.Card;
 
@@ -7,8 +7,8 @@ public class GauntletOptionsMessage extends DuelystMessage {
 	public final Card option2;
 	public final Card option3;
 	
-	public GauntletOptionsMessage(Card option1, Card option2, Card option3) {
-		super(MessageType.GAUNTLET_OPTIONS);
+	public GauntletOptionsMessage(String playerId, Card option1, Card option2, Card option3) {
+		super(MessageType.GAUNTLET_OPTIONS, playerId);
 		
 		this.option1 = option1;
 		this.option2 = option2;
@@ -17,6 +17,6 @@ public class GauntletOptionsMessage extends DuelystMessage {
 	
 	@Override
 	public String toString() {
-		return "Gauntlet Options: " + option1.name + ", " + option2.name + ", " + option3.name;
+		return super.toString() + option1.name + ", " + option2.name + ", " + option3.name;
 	}
 }

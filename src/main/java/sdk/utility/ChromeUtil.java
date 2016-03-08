@@ -35,8 +35,21 @@ public class ChromeUtil {
 	private static final String CHROME_LINUX_PATH = "/usr/bin/google-chrome";
 	private static final String CHROMIUM_LINUX_PATH = "/usr/bin/chromium-browser";
 	
+	private static final List<String> CHROME_WIN_PATHS = new ArrayList<String>();
+	
+	static {
+		CHROME_WIN_PATHS.add("%ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe");
+		CHROME_WIN_PATHS.add("%ProgramFiles(x86)%\\Google\\Chrome\\Application\\chrome.exe");
+		CHROME_WIN_PATHS.add("%USERPROFILE%\\AppData\\Local\\Google\\Chrome\\Application\\chrome.exe");
+		CHROME_WIN_PATHS.add("%USERPROFILE%\\Local Settings\\Application Data\\Google\\Chrome\\Application\\chrome.exe");
+		CHROME_WIN_PATHS.add("%LOCALAPPDATA%\\Google\\Chrome\\Application\\chrome.exe");
+		
+		// Should be redundant but what the hell
+		CHROME_WIN_PATHS.add("%PROGRAMFILES%\\..\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe");
+	}
+	
 	private static int msgId = 0;
-	public static final Map<Integer, String> callbacks = new HashMap<Integer, String>();
+	public static final Map<Integer, Object> callbacks = new HashMap<Integer, Object>();
 	
 	public static Process launchDebug(String chromePath, String url) throws IOException {
 		return new ProcessBuilder(chromePath, url, "--remote-debugging-port=" + DEFAULT_PORT, "--user-data-dir=remote-profile").start();
@@ -89,10 +102,10 @@ public class ChromeUtil {
 	       	    .add("method", domain + (enable ? ".enable" : ".disable"))
 	       	    .build();
 		
-		sendText(webSocket, msgId, "enableWs" + domain + ":" + enable, object.toString());
+		sendText(webSocket, msgId, null, object.toString());
 	}
 	
-	public static void getObjectProperties(WebSocket webSocket, String objectId) {
+	public static void getObjectProperties(WebSocket webSocket, String objectId, Object tag) {
 		JsonObject object = Json.createObjectBuilder()
 	       	    .add("id", ++msgId)
 	       	    .add("method", "Runtime.getProperties")
@@ -100,13 +113,12 @@ public class ChromeUtil {
 	       	    	.add("objectId", objectId))
 	       	    .build();
 		
-		sendText(webSocket, msgId, "getObjectProperties:" + objectId, object.toString());
+		sendText(webSocket, msgId, tag, object.toString());
 	}
 	
-	private static void sendText(WebSocket webSocket, int msgId, String description, String text) {
-		callbacks.put(msgId, description);
+	private static void sendText(WebSocket webSocket, int msgId, Object tag, String text) {
+		callbacks.put(msgId, tag);
 		webSocket.sendText(text);
-		System.out.println(description + " message sent (" + msgId + ")");
 	}
 	
 	public static String getChromePath(String oldPath) {
@@ -118,7 +130,17 @@ public class ChromeUtil {
 		if (SystemUtils.IS_OS_WINDOWS) {
 			if (Advapi32Util.registryKeyExists(WinReg.HKEY_CURRENT_USER, CHROME_WIN_REG_LOC)) {
 				if (Advapi32Util.registryValueExists(WinReg.HKEY_CURRENT_USER, CHROME_WIN_REG_LOC, "InstallLocation")) {
-					return Advapi32Util.registryGetStringValue(WinReg.HKEY_CURRENT_USER, CHROME_WIN_REG_LOC, "InstallLocation") + "\\chrome.exe";
+					chrome = new File(Advapi32Util.registryGetStringValue(WinReg.HKEY_CURRENT_USER, CHROME_WIN_REG_LOC, "InstallLocation") + "\\chrome.exe");
+					if (chrome.exists()) {
+						return chrome.getPath();
+					}
+				}
+			}
+			
+			for (String path : CHROME_WIN_PATHS) {
+				chrome = new File(path);
+				if (chrome.exists()) {
+					return chrome.getPath();
 				}
 			}
 		} else if (SystemUtils.IS_OS_LINUX) {
