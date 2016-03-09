@@ -4,6 +4,7 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -31,7 +32,7 @@ import com.sun.jna.platform.win32.WinReg;
 public class ChromeUtil {
 	private static final int DEFAULT_PORT = 9222;
 	
-	private static final String CHROME_WIN_REG_LOC = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Google Chrome";
+	private static final String CHROME_WIN_REG_LOC = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\chrome.exe";
 	private static final String CHROME_LINUX_PATH = "/usr/bin/google-chrome";
 	private static final String CHROMIUM_LINUX_PATH = "/usr/bin/chromium-browser";
 	
@@ -51,8 +52,11 @@ public class ChromeUtil {
 	private static int msgId = 0;
 	public static final Map<Integer, Object> callbacks = new HashMap<Integer, Object>();
 	
-	public static Process launchDebug(String chromePath, String url) throws IOException {
-		return new ProcessBuilder(chromePath, url, "--remote-debugging-port=" + DEFAULT_PORT, "--user-data-dir=remote-profile").start();
+	public static Process launchDebug(String chromePath, String url, String profileName) throws IOException, URISyntaxException {
+		File dirFile = new File(ChromeUtil.class.getProtectionDomain().getCodeSource().getLocation().toURI()).getParentFile();
+		File proFile = new File(dirFile, profileName);
+		
+		return new ProcessBuilder(chromePath, url, "--remote-debugging-port=" + DEFAULT_PORT, "--user-data-dir=" + proFile.getAbsolutePath()).start();
 	}
 	
 	public static JsonArray getJsonResponse() throws IOException, ClientProtocolException {
@@ -128,9 +132,9 @@ public class ChromeUtil {
 		}
 		
 		if (SystemUtils.IS_OS_WINDOWS) {
-			if (Advapi32Util.registryKeyExists(WinReg.HKEY_CURRENT_USER, CHROME_WIN_REG_LOC)) {
-				if (Advapi32Util.registryValueExists(WinReg.HKEY_CURRENT_USER, CHROME_WIN_REG_LOC, "InstallLocation")) {
-					chrome = new File(Advapi32Util.registryGetStringValue(WinReg.HKEY_CURRENT_USER, CHROME_WIN_REG_LOC, "InstallLocation") + "\\chrome.exe");
+			if (Advapi32Util.registryKeyExists(WinReg.HKEY_LOCAL_MACHINE, CHROME_WIN_REG_LOC)) {
+				if (Advapi32Util.registryValueExists(WinReg.HKEY_LOCAL_MACHINE, CHROME_WIN_REG_LOC, "Path")) {
+					chrome = new File(Advapi32Util.registryGetStringValue(WinReg.HKEY_LOCAL_MACHINE, CHROME_WIN_REG_LOC, "Path") + "\\chrome.exe");
 					if (chrome.exists()) {
 						return chrome.getPath();
 					}

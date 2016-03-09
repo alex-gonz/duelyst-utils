@@ -2,6 +2,7 @@ package sdk.duelyst.console;
 
 import java.io.IOException;
 import java.io.StringReader;
+import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.NoSuchElementException;
@@ -35,8 +36,8 @@ public class DuelystConsole {
 	private static final int DECK_SIZE = 40;
 	private static final int HAND_SIZE = 3;
 	
-	public static Process launchDebug(String chromePath) throws IOException {
-		return ChromeUtil.launchDebug(chromePath, URL);
+	public static Process launchDebug(String chromePath) throws IOException, URISyntaxException {
+		return ChromeUtil.launchDebug(chromePath, URL, "duelyst-profile");
 	}
 	
 	private WebSocket webSocket;
@@ -106,7 +107,8 @@ public class DuelystConsole {
 						break;
 					case 1:
 						int cardId = getResultInt(jsonObject, "id");
-						sendMessage(new CardPlayedMessage(state.playerId, DuelystLibrary.cardsById.get(cardId)));
+						((CardPlayedMessage)state.message).card = DuelystLibrary.cardsById.get(cardId);
+						sendMessage(state.message);
 						break;
 					}
 					break;
@@ -256,38 +258,57 @@ public class DuelystConsole {
 					// Game start
 					if (message.contains("GameSetup.setupNewSession") && message.contains("userId") && message.contains("SDK")) {
 						for (int i = 0; i < 2; i++) {
-							String objectId = msg.getJsonArray("parameters").getJsonObject(4 + i).getString("objectId");
-							String playerId = msg.getJsonArray("parameters").getJsonObject(4 + i).getJsonObject("preview").getJsonArray("properties").getJsonObject(0).getString("value");
-							String playerName = msg.getJsonArray("parameters").getJsonObject(4 + i).getJsonObject("preview").getJsonArray("properties").getJsonObject(1).getString("value");
+							JsonObject parameter = getParameterObject(msg, 4 + i);
+							
+							String objectId = parameter.getString("objectId");
+							String playerId = getPropertyString(parameter, 0);
+							String playerName = getPropertyString(parameter, 1);
 							
 							DuelystMessageState state = new DuelystMessageState(playerName, MessageType.GAME_START);
 							state.message = new GameStartedMessage(playerId, playerName);
+							
 							ChromeUtil.getObjectProperties(webSocket, objectId, state);
 						}
 					}
 					// Starting hand
 					else if (message.contains("DrawStartingHandAction") && message.contains("VIEW")) {
-						String objectId = msg.getJsonArray("parameters").getJsonObject(5).getString("objectId");
-						String playerId = msg.getJsonArray("parameters").getJsonObject(5).getJsonObject("preview").getJsonArray("properties").getJsonObject(1).getString("value");
+						JsonObject parameter = getParameterObject(msg, 5);
+						
+						String objectId = parameter.getString("objectId");
+						String playerId = getPropertyString(parameter, 1);
+						
 						ChromeUtil.getObjectProperties(webSocket, objectId, new DuelystMessageState(playerId, MessageType.STARTING_HAND));
 					}
 					// Replace card
 					else if (message.contains("ReplaceCardFromHandAction") && message.contains("VIEW")) {
-						String objectId = msg.getJsonArray("parameters").getJsonObject(5).getString("objectId");
-						String playerId = msg.getJsonArray("parameters").getJsonObject(5).getJsonObject("preview").getJsonArray("properties").getJsonObject(2).getString("value");
+						JsonObject parameter = getParameterObject(msg, 5);
+						
+						String objectId = parameter.getString("objectId");
+						String playerId = getPropertyString(parameter, 2);
+						
 						ChromeUtil.getObjectProperties(webSocket, objectId, new DuelystMessageState(playerId, MessageType.CARD_REPLACE));
 					}
 					// End turn
 					else if (message.contains("EndTurnAction") && message.contains("VIEW")) {
-						String objectId = msg.getJsonArray("parameters").getJsonObject(5).getString("objectId");
-						String playerId = msg.getJsonArray("parameters").getJsonObject(5).getJsonObject("preview").getJsonArray("properties").getJsonObject(1).getString("value");
+						JsonObject parameter = getParameterObject(msg, 5);
+						
+						String objectId = parameter.getString("objectId");
+						String playerId = getPropertyString(parameter, 1);
+						
 						ChromeUtil.getObjectProperties(webSocket, objectId, new DuelystMessageState(playerId, MessageType.TURN_END));
 					}
 					// Play card
 					else if (message.contains("PlayCardFromHandAction") && message.contains("VIEW")) {
-						String objectId = msg.getJsonArray("parameters").getJsonObject(5).getString("objectId");
-						String playerId = msg.getJsonArray("parameters").getJsonObject(5).getJsonObject("preview").getJsonArray("properties").getJsonObject(2).getString("value");
-						ChromeUtil.getObjectProperties(webSocket, objectId, new DuelystMessageState(playerId, MessageType.CARD_PLAY));
+						JsonObject parameter = getParameterObject(msg, 5);
+
+						String objectId = parameter.getString("objectId");
+						String playerId = getPropertyString(parameter, 2);
+						int cardIndex = Integer.parseInt(getPropertyString(parameter, 3));
+						
+						DuelystMessageState state = new DuelystMessageState(playerId, MessageType.CARD_PLAY);
+						state.message = new CardPlayedMessage(state.playerId, cardIndex);
+						
+						ChromeUtil.getObjectProperties(webSocket, objectId, state);
 					}
 					// Gauntlet picks
 					else if (message.contains("preview")) {
@@ -317,6 +338,18 @@ public class DuelystConsole {
 			System.out.println(ex.getMessage());
 			ex.printStackTrace();
 		}
+	}
+
+	private JsonObject getParameterObject(JsonObject jsonObject, int index) {
+		return jsonObject.getJsonArray("parameters").getJsonObject(index);
+	}
+	
+	private String getPropertyString(JsonObject jsonObject, int index) {
+		return getPropertyObject(jsonObject, index).getString("value");
+	}
+
+	private JsonObject getPropertyObject(JsonObject jsonObject, int index) {
+		return jsonObject.getJsonObject("preview").getJsonArray("properties").getJsonObject(index);
 	}
 	
 	private JsonObject getResultObject(JsonObject jsonObject, String name) {
