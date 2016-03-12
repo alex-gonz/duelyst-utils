@@ -587,7 +587,6 @@ public class DuelystConsole {
 
 /* TODO Tasks
  * 
- * Rename project
  * Note that it may fail the first time
  * Note that changing accounts will need a restart
  *
