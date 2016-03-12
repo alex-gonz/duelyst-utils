@@ -39,9 +39,7 @@ public class DuelystConsole {
 	public static final int HAND_SIZE = 6;
 	private static final int STARTING_HAND_SIZE = 3;
 	
-	// TODO Set for gauntlet too
-	// TODO Remove at some point?
-	private String playerId = null;
+	private String playerId;
 	
 	public static Process launchDebug(String chromePath) throws IOException, URISyntaxException {
 		return ChromeUtil.launchDebug(chromePath, URL, "duelyst-profile");
@@ -98,11 +96,6 @@ public class DuelystConsole {
 					return;
 				}
 				
-				// Ignore messages about other players
-				//if (playerId == null || !state.playerId.equals(playerId)) {
-				//	return;
-				//} TODO
-				
 				switch (state.type)
 				{
 				case CANCEL:
@@ -128,7 +121,7 @@ public class DuelystConsole {
 						
 						break;
 					case 3:
-						if (getResultString(jsonObject, "playerId").equals(state.playerId)) {
+						if (getResultString(jsonObject, "playerId").equals(playerId)) {
 							getResultObjectWs(jsonObject, "deck", state);
 						}
 						
@@ -150,23 +143,13 @@ public class DuelystConsole {
 									if (isUint(name)) {
 										cardObjects.add(resultObject);
 									} else if (name.equals("length")) {
-										int count = resultObject.getJsonObject("value").getInt("value");
 										state.message = new DeckUpdateMessage(state.playerId, resultObject.getJsonObject("value").getInt("value"));
-
-										long startTime = System.nanoTime();
 										
 										// Need separate messages so stages don't get messed up
 										for (JsonObject cardObject : cardObjects) {
 											getResultObjectWs(cardObject, new DuelystMessageState(state));
 											Thread.sleep(25); // Stops interface from freezing up
 										}
-										
-										long endTime = System.nanoTime();
-										
-										double timeMs = (endTime - startTime) / 1000000D;
-										timeMs -= 25 * count;
-										
-										System.out.println(timeMs);
 										
 										endFound = true;
 										break;
@@ -317,7 +300,7 @@ public class DuelystConsole {
 						
 						break;
 					case 4:
-						getResultObjectWs(jsonObject, "_cachedCardsInHandExcludingMissing", state); // TODO this ends up being empty for other player?
+						getResultObjectWs(jsonObject, "_cachedCardsInHandExcludingMissing", state);
 						break;
 					case 5:
 						state.message = new StartingHandMessage(state.playerId);
@@ -345,28 +328,6 @@ public class DuelystConsole {
 				sendMessage(new ExitMessage());
 			}
 			else if (wsMessageIsConsole(jsonObject)) {
-				// TODO Rename project
-				// TODO Note that it may fail the first time
-				// TODO Note that changing accounts will screw it up
-				
-				// TODO Save checkbox and maybe faction settings?
-				// TODO Handle cards that steal from decks! Maybe I just need to update the whole deck on any event...
-				// TODO Show card image on mouseover?
-				
-				// TODO Card draw on damage: lionheart blessing with grasp of agony
-				// TODO Card draw on move: mogwai
-				// TODO Card draw on deathwatch: rook
-				// TODO Card draw on hailstone (coming from player 2)
-				
-				// TODO Tusk boar returns on other player's end of turn step, in _cached_resolveSubActions, StartTurnAction, _subActions, PutCardInHandAction
-				// TODO Lionheart, AttackAction, _subActions, DrawCardAction
-				// TODO Overdraw, indexOfCardInHand is null
-				// TODO Void Hunter, other player's AttackAction, _subActions, other player's DieAction, _subActions, DrawCardAction (PutCardInHandAction for snow chaser?)
-				// TODO Artifacthunter is PutCardInHandAction
-				
-				// TODO Dreamgazer, maybe get whether it was played from subactions?
-				// TODO CARD_DRAW case 2 object is null in fatigue
-				
 				// Just be lazy and get the deck each time
 				boolean objectFound = false;
 				if (jsonObject.containsKey("params"))
@@ -430,9 +391,6 @@ public class DuelystConsole {
 					}
 				}
 				
-				// TODO Just to test without any of these
-				objectFound = true;
-				
 				if (!objectFound) {
 					// Opening gambit cancelled
 					if (message.contains("App:onUserTriggeredCancel")) {
@@ -467,7 +425,9 @@ public class DuelystConsole {
 							String objectId = parameter.getString("objectId");
 							String playerId = getPropertyString(parameter, 1);
 							
-							ChromeUtil.getObjectProperties(webSocket, objectId, new DuelystMessageState(playerId, MessageType.STARTING_HAND));
+							if (playerId.equals(this.playerId)) {
+								ChromeUtil.getObjectProperties(webSocket, objectId, new DuelystMessageState(playerId, MessageType.STARTING_HAND));
+							}
 						}
 						// Replace card
 						else if (message.contains("ReplaceCardFromHandAction") && message.contains("VIEW")) {
@@ -475,8 +435,10 @@ public class DuelystConsole {
 							
 							String objectId = parameter.getString("objectId");
 							String playerId = getPropertyString(parameter, 2);
-							
-							ChromeUtil.getObjectProperties(webSocket, objectId, new DuelystMessageState(playerId, MessageType.CARD_REPLACE));
+
+							if (playerId.equals(this.playerId)) {
+								ChromeUtil.getObjectProperties(webSocket, objectId, new DuelystMessageState(playerId, MessageType.CARD_REPLACE));
+							}
 						}
 						// End turn
 						else if (message.contains("EndTurnAction") && message.contains("VIEW")) {
@@ -484,8 +446,10 @@ public class DuelystConsole {
 							
 							String objectId = parameter.getString("objectId");
 							String playerId = getPropertyString(parameter, 1);
-							
-							ChromeUtil.getObjectProperties(webSocket, objectId, new DuelystMessageState(playerId, MessageType.TURN_END));
+
+							if (playerId.equals(this.playerId)) {
+								ChromeUtil.getObjectProperties(webSocket, objectId, new DuelystMessageState(playerId, MessageType.TURN_END));
+							}
 						}
 						// Play card
 						else if (message.contains("PlayCardFromHandAction") && message.contains("VIEW")) {
@@ -497,8 +461,10 @@ public class DuelystConsole {
 							
 							DuelystMessageState state = new DuelystMessageState(playerId, MessageType.CARD_PLAY);
 							state.message = new CardPlayedMessage(state.playerId, cardIndex);
-							
-							ChromeUtil.getObjectProperties(webSocket, objectId, state);
+
+							if (playerId.equals(this.playerId)) {
+								ChromeUtil.getObjectProperties(webSocket, objectId, state);
+							}
 						}
 						// Gauntlet picks
 						else if (message.contains("preview")) {
@@ -526,8 +492,8 @@ public class DuelystConsole {
 					}
 				}
 			}
-		} catch (Exception ex) {
-			ex.printStackTrace();
+		} catch (Exception e) {
+			e.printStackTrace();
 		}
 	}
 
@@ -618,3 +584,30 @@ public class DuelystConsole {
 		return true;
 	}
 }
+
+/* TODO Tasks
+ * 
+ * Rename project
+ * Note that it may fail the first time
+ * Note that changing accounts will need a restart
+ *
+ * Save checkbox and maybe faction settings
+ * Save card library and gauntlet helper to disk
+ * CARD_DRAW case 2 object is null in fatigue
+ * 
+ * Show card image on mouseover
+ * Create method to process subactions instead of updating whole deck
+ *
+ * Card draw on damage: lionheart blessing with grasp of agony
+ * Card draw on move: mogwai
+ * Card draw on deathwatch: rook
+ * Card draw on hailstone (coming from player 2)
+ * Handle cards that steal from decks
+ * Tusk boar returns on other player's end of turn step, in _cached_resolveSubActions, StartTurnAction, _subActions, PutCardInHandAction
+ * Lionheart, AttackAction, _subActions, DrawCardAction
+ * Overdraw, indexOfCardInHand is null
+ * Void Hunter, other player's AttackAction, _subActions, other player's DieAction, _subActions, DrawCardAction (PutCardInHandAction for snow chaser?)
+ * Artifacthunter is PutCardInHandAction
+ * Dreamgazer, maybe get whether it was played from subactions
+ * 
+*/
