@@ -6,6 +6,8 @@ import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.NoSuchElementException;
+import java.util.Timer;
+import java.util.TimerTask;
 
 import javax.json.Json;
 import javax.json.JsonArray;
@@ -15,6 +17,7 @@ import javax.json.JsonValue.ValueType;
 
 import sdk.duelyst.Card;
 import sdk.duelyst.DuelystLibrary;
+import sdk.duelyst.Faction;
 import sdk.duelyst.console.message.CancelMessage;
 import sdk.duelyst.console.message.CardDrawnMessage;
 import sdk.duelyst.console.message.CardPlayedMessage;
@@ -25,6 +28,7 @@ import sdk.duelyst.console.message.ExitMessage;
 import sdk.duelyst.console.message.GameEndedMessage;
 import sdk.duelyst.console.message.GameStartedMessage;
 import sdk.duelyst.console.message.GauntletOptionsMessage;
+import sdk.duelyst.console.message.JoinedGameMessage;
 import sdk.duelyst.console.message.MessageType;
 import sdk.duelyst.console.message.StartingHandMessage;
 import sdk.utility.ChromeUtil;
@@ -39,13 +43,52 @@ public class DuelystConsole {
 	public static final int HAND_SIZE = 6;
 	private static final int STARTING_HAND_SIZE = 3;
 	
-	private String playerId;
-	
 	public static Process launchDebug(String chromePath) throws IOException, URISyntaxException {
 		return ChromeUtil.launchDebug(chromePath, URL, "duelyst-profile");
 	}
 	
 	private WebSocket webSocket;
+	String wsUrl;
+	private Timer keepAlive = new Timer();
+	
+	private boolean messageReceived = false;
+	
+	private String playerId;
+	
+	public DuelystConsole() {
+		keepAlive.schedule(new TimerTask() {
+        	@Override
+        	public void run() {
+        		keepAlive();
+        	}
+        }, 30000, 30000);
+	}
+	
+	// WebSocket stops sending messages at some point, maybe because of so many sent messages for deck updates
+	private void keepAlive() {
+		synchronized (this) {
+			if (webSocket != null && wsUrl != null && webSocket.isOpen() && !messageReceived) {
+				disconnect();
+				
+				try {
+					Thread.sleep(1000);
+				} catch (InterruptedException e) {
+					e.printStackTrace();
+				}
+				
+				// TODO This is real ugly, if it fails there's no way to report it without some custom event
+				try {
+					connect(wsUrl);
+				} catch (IOException e) {
+					e.printStackTrace();
+				} catch (WebSocketException e) {
+					e.printStackTrace();
+				}
+			}
+			
+			messageReceived = false;
+		}
+	}
 	
 	private List<DuelystConsoleListener> listeners = new ArrayList<DuelystConsoleListener>();
 
@@ -59,14 +102,19 @@ public class DuelystConsole {
     }
 	
 	public void connect(String wsUrl) throws IOException, WebSocketException {
-		webSocket = ChromeUtil.connectWebSocket(wsUrl, new WebSocketAdapter() {
-		    @Override
-		    public void onTextMessage(WebSocket ws, String message) throws Exception {
-		    	handleWsMessage(message);
-		    }
-		});
-		ChromeUtil.enableWsConsole(webSocket, true);
-		ChromeUtil.enableWsRuntime(webSocket, true);
+		this.wsUrl = wsUrl;
+		
+		synchronized (this) {
+			webSocket = ChromeUtil.connectWebSocket(wsUrl, new WebSocketAdapter() {
+			    @Override
+			    public void onTextMessage(WebSocket ws, String message) throws Exception {
+			    	handleWsMessage(message);
+			    }
+			});
+			
+			ChromeUtil.enableWsConsole(webSocket, true);
+			ChromeUtil.enableWsRuntime(webSocket, true);
+		}
 	}
 	
 	public boolean isOpen() {
@@ -77,323 +125,348 @@ public class DuelystConsole {
 		if (isOpen()) {
 			ChromeUtil.enableWsConsole(webSocket, false);
 			ChromeUtil.enableWsRuntime(webSocket, false);
+			ChromeUtil.clearWsConsole(webSocket);
 			webSocket.disconnect();
 		}
 	}
 
 	private void handleWsMessage(String message) {
-		try {
-			JsonObject jsonObject = Json.createReader(new StringReader(message)).readObject();
-			
-			if (wsMessageIsResponse(jsonObject)) {
-				int id = jsonObject.getInt("id");
-				Object callbackTag = ChromeUtil.callbacks.get(id);
-				DuelystMessageState state = callbackTag instanceof DuelystMessageState ? (DuelystMessageState)callbackTag : null;
-				ChromeUtil.callbacks.remove(id);
+		synchronized (this) {
+			messageReceived = true;
+		
+			try {
+				JsonObject jsonObject = Json.createReader(new StringReader(message)).readObject();
 				
-				// Handle empty responses, seems to happen on startup when querying old messages
-				if (message.contains("\"result\":{}") || state == null) {
-					return;
-				}
-				
-				switch (state.type)
-				{
-				case CANCEL:
-				case EXIT:
-				case GAME_END:
-				case GAUNTLET_OPTIONS:
-					throw new IllegalStateException("MessageType." + state.type + " encountered in message stage switching, but shouldn't be.");
-				case DECK_UPDATE:
-				{
-					switch (state.stage)
+				if (wsMessageIsResponse(jsonObject)) {
+					int id = jsonObject.getInt("id");
+					Object callbackTag = ChromeUtil.callbacks.get(id);
+					DuelystMessageState state = callbackTag instanceof DuelystMessageState ? (DuelystMessageState)callbackTag : null;
+					ChromeUtil.callbacks.remove(id);
+					
+					// Handle empty responses, seems to happen on startup when querying old messages
+					if (message.contains("\"result\":{}") || state == null) {
+						return;
+					}
+					
+					switch (state.type)
 					{
-					case 0:
-						getResultObjectWs(jsonObject, "_gameSession", state);
-						break;
-					case 1:
-						getResultObjectWs(jsonObject, "players", state);
-						break;
-					case 2:
-						for (int i = 0; i < 2; i++) {
-							// Need separate messages so stages don't get messed up
-							getResultObjectWs(jsonObject, i, new DuelystMessageState(state));
-						}
-						
-						break;
-					case 3:
-						if (getResultString(jsonObject, "playerId").equals(playerId)) {
+					case CANCEL:
+					case EXIT:
+					case GAME_END:
+					case GAUNTLET_OPTIONS:
+						throw new IllegalStateException("MessageType." + state.type + " encountered in message stage switching, but shouldn't be.");
+					case GAME_START:
+					{
+						switch (state.stage)
+						{
+						case 0:
 							getResultObjectWs(jsonObject, "deck", state);
+							break;
+						case 1:
+							for (int i = 0; i < DECK_SIZE; i++) {
+								// Need separate messages so stages don't get messed up
+								getResultObjectWs(jsonObject, i, new DuelystMessageState(state));
+							}
+							
+							break;
+						case 2:
+							int cardId = getResultInt(jsonObject, "id");
+							List<Card> deck = ((GameStartedMessage)state.message).deck;
+							deck.add(DuelystLibrary.cardsById.get(cardId));
+							
+							if (deck.size() == DECK_SIZE) {
+								sendMessage(state.message);
+							}
+							
+							break;
 						}
-						
 						break;
-					case 4:
-						getResultObjectWs(jsonObject, "_cachedCardsExcludingMissing", state);
+					}
+					case JOINED_GAME:
+					{
+						int factionId = getResultInt(jsonObject, "faction_id");
+						int generalId = getResultInt(jsonObject, "general_id");
+						playerId = getResultString(jsonObject, "user_id");
+						
+						sendMessage(new JoinedGameMessage(playerId, Faction.fromValue(factionId), generalId));
 						break;
-					case 5:
-						
-						
-						List<JsonObject> cardObjects = new ArrayList<JsonObject>();
-						boolean endFound = false;
-						do {
-							for (JsonValue result : jsonObject.getJsonObject("result").getJsonArray("result")) {
-								if (result.getValueType() == ValueType.OBJECT) {
-									JsonObject resultObject = (JsonObject)result;
-									String name = resultObject.getString("name");
-									
-									if (isUint(name)) {
-										cardObjects.add(resultObject);
-									} else if (name.equals("length")) {
-										state.message = new DeckUpdateMessage(state.playerId, resultObject.getJsonObject("value").getInt("value"));
+					}
+					case DECK_UPDATE:
+					{
+						switch (state.stage)
+						{
+						case 0:
+							getResultObjectWs(jsonObject, "_gameSession", state);
+							break;
+						case 1:
+							getResultObjectWs(jsonObject, "players", state);
+							break;
+						case 2:
+							for (int i = 0; i < 2; i++) {
+								// Need separate messages so stages don't get messed up
+								getResultObjectWs(jsonObject, i, new DuelystMessageState(state));
+							}
+							
+							break;
+						case 3:
+							if (getResultString(jsonObject, "playerId").equals(playerId)) {
+								state.message = new DeckUpdateMessage(playerId, getResultString(jsonObject, "username"));
+								getResultObjectWs(jsonObject, "deck", state);
+							}
+							
+							break;
+						case 4:
+							getResultObjectWs(jsonObject, "_cachedCardsExcludingMissing", state);
+							break;
+						case 5:
+							
+							
+							List<JsonObject> cardObjects = new ArrayList<JsonObject>();
+							boolean endFound = false;
+							do {
+								for (JsonValue result : jsonObject.getJsonObject("result").getJsonArray("result")) {
+									if (result.getValueType() == ValueType.OBJECT) {
+										JsonObject resultObject = (JsonObject)result;
+										String name = resultObject.getString("name");
 										
-										// Need separate messages so stages don't get messed up
-										for (JsonObject cardObject : cardObjects) {
-											getResultObjectWs(cardObject, new DuelystMessageState(state));
-											Thread.sleep(25); // Stops interface from freezing up
+										if (isUint(name)) {
+											cardObjects.add(resultObject);
+										} else if (name.equals("length")) {
+											int count = resultObject.getJsonObject("value").getInt("value");
+											((DeckUpdateMessage)state.message).count = count;
+											
+											if (count == 0) {
+												sendMessage(state.message);
+											} else {
+												// Need separate messages so stages don't get messed up
+												for (JsonObject cardObject : cardObjects) {
+													getResultObjectWs(cardObject, new DuelystMessageState(state));
+													Thread.sleep(25); // Stops interface from freezing up
+												}
+												
+												endFound = true;
+												break;
+											}
 										}
-										
+									}
+									else {
 										endFound = true;
 										break;
 									}
 								}
-								else {
-									endFound = true;
+							} while (!endFound);
+							
+							break;
+						case 6:
+							DeckUpdateMessage update = (DeckUpdateMessage)state.message;
+							update.deck.add(DuelystLibrary.cardsById.get(getResultInt(jsonObject, "id")));
+							
+							if (update.deck.size() == update.count) {
+								sendMessage(state.message);
+							}
+							
+							break;
+						}
+						break;
+					}
+					case CARD_PLAY:
+					{
+						switch (state.stage)
+						{
+						case 0:
+							getResultObjectWs(jsonObject, "cardDataOrIndex", state);
+							getResultObjectWs(jsonObject, "_subActions", new DuelystMessageState(state, MessageType.CARD_DRAW));
+							break;
+						case 1:
+							int cardId = getResultInt(jsonObject, "id");
+							((CardPlayedMessage)state.message).card = DuelystLibrary.cardsById.get(cardId);
+							sendMessage(state.message);
+							break;
+						}
+						break;
+					}
+					case TURN_END:
+					{
+						getResultObjectWs(jsonObject, "_subActions", new DuelystMessageState(state, MessageType.CARD_DRAW));
+						break;
+					}
+					case CARD_DRAW:
+					{
+						switch (state.stage)
+						{
+						// Starts at 1 because it's sent from other results
+						case 1:
+							// More than just card draw
+							int i = 0;
+							for (JsonValue result : jsonObject.getJsonObject("result").getJsonArray("result")) {
+								if (!result.toString().contains("length")) {
+									getResultObjectWs(jsonObject, i, new DuelystMessageState(state));
+									i++;
+								} else {
 									break;
 								}
 							}
-						} while (!endFound);
-						
-						break;
-					case 6:
-						DeckUpdateMessage update = (DeckUpdateMessage)state.message;
-						update.deck.add(DuelystLibrary.cardsById.get(getResultInt(jsonObject, "id")));
-						
-						if (update.deck.size() == update.count) {
-							sendMessage(state.message);
-						}
-						
-						break;
-					}
-					break;
-				}
-				case CARD_PLAY:
-				{
-					switch (state.stage)
-					{
-					case 0:
-						getResultObjectWs(jsonObject, "cardDataOrIndex", state);
-						getResultObjectWs(jsonObject, "_subActions", new DuelystMessageState(state, MessageType.CARD_DRAW));
-						break;
-					case 1:
-						int cardId = getResultInt(jsonObject, "id");
-						((CardPlayedMessage)state.message).card = DuelystLibrary.cardsById.get(cardId);
-						sendMessage(state.message);
-						break;
-					}
-					break;
-				}
-				case TURN_END:
-				{
-					getResultObjectWs(jsonObject, "_subActions", new DuelystMessageState(state, MessageType.CARD_DRAW));
-					break;
-				}
-				case CARD_DRAW:
-				{
-					switch (state.stage)
-					{
-					// Starts at 1 because it's sent from other results
-					case 1:
-						// More than just card draw
-						int i = 0;
-						for (JsonValue result : jsonObject.getJsonObject("result").getJsonArray("result")) {
-							if (!result.toString().contains("length")) {
-								getResultObjectWs(jsonObject, i, new DuelystMessageState(state));
-								i++;
-							} else {
+							
+							break;
+						case 2:
+							if (getResultString(jsonObject, "type").equals("DrawCardAction")) {
+								getResultObjectWs(jsonObject, "cardDataOrIndex", state, true);
+							}
+							break;
+						case 3:
+							int cardId = getResultInt(jsonObject, "id");
+							
+							// Handles things like Panddo which for some reason show as card draw
+							if (!DuelystLibrary.cardsById.containsKey(cardId)) {
 								break;
 							}
-						}
-						
-						break;
-					case 2:
-						if (getResultString(jsonObject, "type").equals("DrawCardAction")) {
-							getResultObjectWs(jsonObject, "cardDataOrIndex", state, true);
-						}
-						break;
-					case 3:
-						int cardId = getResultInt(jsonObject, "id");
-						
-						// Handles things like Panddo which for some reason show as card draw
-						if (!DuelystLibrary.cardsById.containsKey(cardId)) {
+							
+							sendMessage(new CardDrawnMessage(state.playerId, DuelystLibrary.cardsById.get(cardId)));
 							break;
 						}
-						
-						sendMessage(new CardDrawnMessage(state.playerId, DuelystLibrary.cardsById.get(cardId)));
 						break;
 					}
-					break;
-				}
-				case GAME_START:
-				{
-					switch (state.stage)
+					case CARD_REPLACE:
 					{
-					case 0:
-						getResultObjectWs(jsonObject, "deck", state);
-						break;
-					case 1:
-						for (int i = 0; i < DECK_SIZE; i++) {
-							// Need separate messages so stages don't get messed up
-							getResultObjectWs(jsonObject, i, new DuelystMessageState(state));
-						}
-						
-						break;
-					case 2:
-						int cardId = getResultInt(jsonObject, "id");
-						List<Card> deck = ((GameStartedMessage)state.message).deck;
-						deck.add(DuelystLibrary.cardsById.get(cardId));
-						
-						if (deck.size() == DECK_SIZE) {
-							sendMessage(state.message);
-						}
-						
-						break;
-					}
-					break;
-				}
-				case CARD_REPLACE:
-				{
-					switch (state.stage)
-					{
-					case 0:
-						int replacedIndex = getResultInt(jsonObject, "indexOfCardInHand");
-						state.message = new CardReplacedMessage(state.playerId, replacedIndex);
-						getResultObjectWs(jsonObject, "cardDataOrIndex", state);
-						break;
-					case 1:
-						int cardId = getResultInt(jsonObject, "id");
-						((CardReplacedMessage)state.message).card = DuelystLibrary.cardsById.get(cardId);
-						sendMessage(state.message);
-						break;
-					}
-					break;
-				}
-				case STARTING_HAND:
-				{
-					switch (state.stage)
-					{
-					case 0:
-						getResultObjectWs(jsonObject, "_gameSession", state);
-						break;
-					case 1:
-						getResultObjectWs(jsonObject, "players", state);
-						break;
-					case 2:
-						for (int i = 0; i < 2; i++) {
-							// Need separate messages so stages don't get messed up
-							getResultObjectWs(jsonObject, i, new DuelystMessageState(state));
-						}
-						
-						break;
-					case 3:
-						if (getResultString(jsonObject, "playerId").equals(state.playerId)) {
-							getResultObjectWs(jsonObject, "deck", state);
-						}
-						
-						break;
-					case 4:
-						getResultObjectWs(jsonObject, "_cachedCardsInHandExcludingMissing", state);
-						break;
-					case 5:
-						state.message = new StartingHandMessage(state.playerId);
-						for (int i = 0; i < 3; i++) {
-							// Need separate messages so stages don't get messed up
-							getResultObjectWs(jsonObject, i, new DuelystMessageState(state));
-						}
-						
-						break;
-					case 6:
-						List<Card> hand = ((StartingHandMessage)state.message).hand;
-						hand.add(DuelystLibrary.cardsById.get(getResultInt(jsonObject, "id")));
-						
-						if (hand.size() == STARTING_HAND_SIZE) {
-							sendMessage(state.message);
-						}
-						
-						break;
-					}
-					break;
-				}
-				}
-			}
-			else if (wsMessageIsExit(jsonObject)) {
-				sendMessage(new ExitMessage());
-			}
-			else if (wsMessageIsConsole(jsonObject)) {
-				// Just be lazy and get the deck each time
-				boolean objectFound = false;
-				if (jsonObject.containsKey("params"))
-				{
-					JsonObject params = jsonObject.getJsonObject("params");
-					if (params.containsKey("message"))
-					{
-						JsonObject messageObject = params.getJsonObject("message");
-						if (messageObject.containsKey("parameters"))
+						switch (state.stage)
 						{
-							JsonArray parameters = messageObject.getJsonArray("parameters");
-							for (JsonValue parameter : parameters)
+						case 0:
+							int replacedIndex = getResultInt(jsonObject, "indexOfCardInHand");
+							state.message = new CardReplacedMessage(state.playerId, replacedIndex);
+							getResultObjectWs(jsonObject, "cardDataOrIndex", state);
+							break;
+						case 1:
+							int cardId = getResultInt(jsonObject, "id");
+							((CardReplacedMessage)state.message).card = DuelystLibrary.cardsById.get(cardId);
+							sendMessage(state.message);
+							break;
+						}
+						break;
+					}
+					case STARTING_HAND:
+					{
+						switch (state.stage)
+						{
+						case 0:
+							getResultObjectWs(jsonObject, "_gameSession", state);
+							break;
+						case 1:
+							getResultObjectWs(jsonObject, "players", state);
+							break;
+						case 2:
+							for (int i = 0; i < 2; i++) {
+								// Need separate messages so stages don't get messed up
+								getResultObjectWs(jsonObject, i, new DuelystMessageState(state));
+							}
+							
+							break;
+						case 3:
+							if (getResultString(jsonObject, "playerId").equals(state.playerId)) {
+								getResultObjectWs(jsonObject, "deck", state);
+							}
+							
+							break;
+						case 4:
+							getResultObjectWs(jsonObject, "_cachedCardsInHandExcludingMissing", state);
+							break;
+						case 5:
+							state.message = new StartingHandMessage(state.playerId);
+							for (int i = 0; i < 3; i++) {
+								// Need separate messages so stages don't get messed up
+								getResultObjectWs(jsonObject, i, new DuelystMessageState(state));
+							}
+							
+							break;
+						case 6:
+							List<Card> hand = ((StartingHandMessage)state.message).hand;
+							hand.add(DuelystLibrary.cardsById.get(getResultInt(jsonObject, "id")));
+							
+							if (hand.size() == STARTING_HAND_SIZE) {
+								sendMessage(state.message);
+							}
+							
+							break;
+						}
+						break;
+					}
+					}
+				}
+				else if (wsMessageIsExit(jsonObject)) {
+					sendMessage(new ExitMessage());
+				}
+				else if (wsMessageIsConsole(jsonObject)) {
+					// Just be lazy and get the deck each time
+					boolean objectFound = false;
+					if (jsonObject.containsKey("params"))
+					{
+						JsonObject params = jsonObject.getJsonObject("params");
+						if (params.containsKey("message"))
+						{
+							JsonObject messageObject = params.getJsonObject("message");
+							if (messageObject.containsKey("parameters"))
 							{
-								if (parameter.getValueType() == ValueType.OBJECT)
+								JsonArray parameters = messageObject.getJsonArray("parameters");
+								for (JsonValue parameter : parameters)
 								{
-									JsonObject parameterObject = (JsonObject)parameter;
-									if (parameterObject.containsKey("objectId") && parameterObject.containsKey("preview"))
+									if (parameter.getValueType() == ValueType.OBJECT)
 									{
-										String objectId = parameterObject.getString("objectId");
-										JsonObject preview = parameterObject.getJsonObject("preview");
-										if (preview.containsKey("properties"))
+										JsonObject parameterObject = (JsonObject)parameter;
+										if (parameterObject.containsKey("objectId") && parameterObject.containsKey("preview"))
 										{
-											boolean actionFound = false;
-											String playerId = null;
-											JsonArray properties = preview.getJsonArray("properties");
-											for (JsonValue property : properties)
+											String objectId = parameterObject.getString("objectId");
+											JsonObject preview = parameterObject.getJsonObject("preview");
+											if (preview.containsKey("properties"))
 											{
-												if (property.getValueType() == ValueType.OBJECT)
+												boolean actionFound = false;
+												String playerId = null;
+												JsonArray properties = preview.getJsonArray("properties");
+												for (JsonValue property : properties)
 												{
-													JsonObject propertyObject = (JsonObject)property;
-													if (propertyObject.getString("name").equals("type")
-															&& propertyObject.getString("type").equals("string")
-															&& propertyObject.getString("value").endsWith("Action"))
+													if (property.getValueType() == ValueType.OBJECT)
 													{
-														actionFound = true;
-													}
-													else if (propertyObject.getString("name").equals("ownerId")
-															&& propertyObject.getString("type").equals("string"))
-													{
-														playerId = propertyObject.getString("value");
-													}
-													
-													if (actionFound && playerId != null) {
-														DuelystMessageState state = new DuelystMessageState(playerId, MessageType.DECK_UPDATE);
-														ChromeUtil.getObjectProperties(webSocket, objectId, state);
-
-														objectFound = true;
-														break;
+														JsonObject propertyObject = (JsonObject)property;
+														if (propertyObject.getString("name").equals("type")
+																&& propertyObject.getString("type").equals("string")
+																&& propertyObject.getString("value").endsWith("Action"))
+														{
+															actionFound = true;
+														}
+														else if (propertyObject.getString("name").equals("ownerId")
+																&& propertyObject.getString("type").equals("string"))
+														{
+															playerId = propertyObject.getString("value");
+														}
+														
+														if (actionFound && playerId != null) {
+															DuelystMessageState state = new DuelystMessageState(playerId, MessageType.DECK_UPDATE);
+															ChromeUtil.getObjectProperties(webSocket, objectId, state);
+	
+															objectFound = true;
+															break;
+														}
 													}
 												}
 											}
 										}
 									}
-								}
-								
-								if (objectFound) {
-									break;
+									
+									if (objectFound) {
+										break;
+									}
 								}
 							}
 						}
 					}
-				}
-				
-				if (!objectFound) {
+					
+					// Joined game
+					if (message.contains("App._joinGame")) {
+						JsonObject parameter = getParameterObject(jsonObject.getJsonObject("params").getJsonObject("message"), 3);
+						String objectId = parameter.getString("objectId");
+						
+						ChromeUtil.getObjectProperties(webSocket, objectId, new DuelystMessageState("", MessageType.JOINED_GAME));
+					}
 					// Opening gambit cancelled
-					if (message.contains("App:onUserTriggeredCancel")) {
+					else if (message.contains("App:onUserTriggeredCancel")) {
 						sendMessage(new CancelMessage());
 					}
 					// Game ended
@@ -405,18 +478,16 @@ public class DuelystConsole {
 						
 						// Game start
 						if (message.contains("GameSetup.setupNewSession") && message.contains("userId") && message.contains("SDK")) {
-							for (int i = 0; i < 1; i++) {
-								JsonObject parameter = getParameterObject(msg, 4 + i);
-								
-								String objectId = parameter.getString("objectId");
-								playerId = getPropertyString(parameter, 0);
-								String playerName = getPropertyString(parameter, 1);
-								
-								DuelystMessageState state = new DuelystMessageState(playerId, MessageType.GAME_START);
-								state.message = new GameStartedMessage(playerId, playerName);
-								
-								ChromeUtil.getObjectProperties(webSocket, objectId, state);
-							}
+							JsonObject parameter = getParameterObject(msg, 4);
+							
+							String objectId = parameter.getString("objectId");
+							playerId = getPropertyString(parameter, 0);
+							String playerName = getPropertyString(parameter, 1);
+							
+							DuelystMessageState state = new DuelystMessageState(playerId, MessageType.GAME_START);
+							state.message = new GameStartedMessage(playerId, playerName);
+							
+							ChromeUtil.getObjectProperties(webSocket, objectId, state);
 						}
 						// Starting hand
 						else if (message.contains("DrawStartingHandAction") && message.contains("VIEW")) {
@@ -491,9 +562,9 @@ public class DuelystConsole {
 						}
 					}
 				}
+			} catch (Exception e) {
+				e.printStackTrace();
 			}
-		} catch (Exception e) {
-			e.printStackTrace();
 		}
 	}
 

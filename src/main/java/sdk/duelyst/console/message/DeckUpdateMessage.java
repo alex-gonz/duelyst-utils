@@ -6,18 +6,19 @@ import java.util.List;
 import sdk.duelyst.Card;
 
 public class DeckUpdateMessage extends DuelystMessage {
+	public final String playerName;
 	public final List<Card> deck = new ArrayList<Card>();
-	public final int count;
+	public int count;
 	
-	public DeckUpdateMessage(String playerId, int count) {
+	public DeckUpdateMessage(String playerId, String playerName) {
 		super(MessageType.DECK_UPDATE, playerId);
 		
-		this.count = count;
+		this.playerName = playerName;
 	}
 	
 	@Override
 	public String toString() {
-		StringBuilder builder = new StringBuilder(super.toString());
+		StringBuilder builder = new StringBuilder(super.toString() + playerName + ": ");
 		for (Card card : deck) {
 			builder.append(card.name);
 			builder.append(", ");

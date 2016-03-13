@@ -109,6 +109,15 @@ public class ChromeUtil {
 		sendText(webSocket, msgId, null, object.toString());
 	}
 	
+	public static void clearWsConsole(WebSocket webSocket) {
+		JsonObject object = Json.createObjectBuilder()
+	       	    .add("id", ++msgId)
+	       	    .add("method", "Console.clearMessages")
+	       	    .build();
+		
+		sendText(webSocket, msgId, null, object.toString());
+	}
+	
 	public static void getObjectProperties(WebSocket webSocket, String objectId, Object tag) {
 		JsonObject object = Json.createObjectBuilder()
 	       	    .add("id", ++msgId)
