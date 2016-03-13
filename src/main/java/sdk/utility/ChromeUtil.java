@@ -53,9 +53,7 @@ public class ChromeUtil {
 	public static final Map<Integer, Object> callbacks = new HashMap<Integer, Object>();
 	
 	public static Process launchDebug(String chromePath, String url, String profileName) throws IOException, URISyntaxException {
-		File dirFile = new File(ChromeUtil.class.getProtectionDomain().getCodeSource().getLocation().toURI()).getParentFile();
-		File proFile = new File(dirFile, profileName);
-		
+		File proFile = new File(System.getProperty("user.dir"), profileName);
 		return new ProcessBuilder(chromePath, url, "--remote-debugging-port=" + DEFAULT_PORT, "--user-data-dir=" + proFile.getAbsolutePath()).start();
 	}
 	
