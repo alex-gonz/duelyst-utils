@@ -119,8 +119,9 @@ public class GauntletDataCyno {
 	                                    else
 	                                    	notes += "Unknown symbol encountered.";
 	                        		}
-	                                
-	                                ratings.get(faction).put(card.id, new Rating(value, notes));
+	                              if (card != null) {
+																	ratings.get(faction).put(card.id, new Rating(value, notes));
+																}
 	                            }
 	                        }
 	        			}
@@ -143,8 +144,8 @@ public class GauntletDataCyno {
     }
 
 	private static String fixName(String name) {
-        name = name.replace('’', '\'');
-        
+				name = name.replaceAll("\\u2019", "'");
+
         if (nameIssues.containsKey(name))
         	name = nameIssues.get(name);
         
