@@ -1,22 +1,27 @@
 package sdk.duelyst;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.util.HashMap;
-import java.util.Map;
+import org.apache.commons.io.FileUtils;
+import org.apache.http.client.ClientProtocolException;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
 
 import javax.json.Json;
 import javax.json.JsonArray;
 import javax.json.JsonObject;
 import javax.json.JsonValue;
 import javax.json.JsonValue.ValueType;
-
-import org.apache.http.client.ClientProtocolException;
-import org.apache.http.client.methods.CloseableHttpResponse;
-import org.apache.http.client.methods.HttpGet;
-import org.apache.http.impl.client.CloseableHttpClient;
-import org.apache.http.impl.client.HttpClients;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.net.URL;
+import java.nio.file.FileAlreadyExistsException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.HashMap;
+import java.util.Map;
 
 public class DuelystLibrary {
 	public static final String DEFAULT_URL = "http://duelystdb.com/card/all.json";
@@ -25,12 +30,17 @@ public class DuelystLibrary {
 	public static Map<String, Card> cardsByName = new HashMap<String, Card>();
 	
 	public static boolean loaded = false;
-	
-	public static void load() throws ClientProtocolException, IOException {
-		load(DEFAULT_URL);
+
+	public static void load() throws IOException {
+		load(DEFAULT_URL, null);
+	}
+
+	/** Loads Library and downloads images to the given folder. */
+	public static void load(Path imageFolder) throws IOException {
+		load(DEFAULT_URL, imageFolder);
 	}
 	
-	public static void load(String url) throws ClientProtocolException, IOException {
+	public static void load(String url, Path imageFolder) throws IOException {
 		if (loaded)
 			throw new IllegalStateException("Library has already been loaded.");
 		
@@ -66,6 +76,10 @@ public class DuelystLibrary {
 			        		cardsById.put(id, card);
 			        		cardsByName.put(name.toUpperCase(), card);
 		        		}
+
+								if (imageFolder != null) {
+									downloadImageIfNotPresent(object.getString("image"), imageFolder);
+								}
 		        	}
 		        }
 		    }
@@ -79,6 +93,19 @@ public class DuelystLibrary {
 				cardsById = new HashMap<Integer, Card>();
 				cardsByName = new HashMap<String, Card>();
 			}
+		}
+	}
+
+	private static void downloadImageIfNotPresent(String imageUrlString, Path imageFolder) {
+		try {
+			URL url = new URL(imageUrlString);
+			String fileName = imageUrlString.substring(imageUrlString.lastIndexOf('/') + 1);
+			Path path = Files.createFile(imageFolder.resolve(fileName));
+			FileUtils.copyURLToFile(url, path.toFile());
+			System.out.println("Downloaded image: " + fileName);
+		} catch (FileAlreadyExistsException ignored) {;
+		} catch (IOException e) {
+			e.printStackTrace();
 		}
 	}
 }
