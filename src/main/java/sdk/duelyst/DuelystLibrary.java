@@ -1,25 +1,27 @@
 package sdk.duelyst;
 
 import org.apache.commons.io.FileUtils;
-import org.apache.http.client.ClientProtocolException;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClients;
+import sdk.utility.ImageTrimmer;
 
+import javax.imageio.ImageIO;
 import javax.json.Json;
 import javax.json.JsonArray;
 import javax.json.JsonObject;
 import javax.json.JsonValue;
 import javax.json.JsonValue.ValueType;
+import java.awt.image.BufferedImage;
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.URL;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -100,10 +102,14 @@ public class DuelystLibrary {
 		try {
 			URL url = new URL(imageUrlString);
 			String fileName = imageUrlString.substring(imageUrlString.lastIndexOf('/') + 1);
-			Path path = Files.createFile(imageFolder.resolve(fileName));
-			FileUtils.copyURLToFile(url, path.toFile());
+			File imageFile = Files.createFile(imageFolder.resolve(fileName)).toFile();
+			FileUtils.copyURLToFile(url, imageFile);
 			System.out.println("Downloaded image: " + fileName);
-		} catch (FileAlreadyExistsException ignored) {;
+
+			BufferedImage trimmed = ImageTrimmer.trimImage(imageFile);
+			ImageIO.write(trimmed, "png", imageFile);
+			System.out.println("Trimmed image: " + fileName);
+		} catch (FileAlreadyExistsException ignored) {
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
