@@ -28,19 +28,15 @@ public class Card {
 		
 		this.description = description;
 	}
-	
+
 	public boolean isMinion() {
 		switch (type) {
-		case ARCANYST:
-		case DERVISH:
-		case GOLEM:
-		case MECH:
-		case MINION:
-		case STRUCTURE:
-		case VESPYR:
-			return true;
-		default:
+		case ARTIFACT:
+		case SPELL:
+		case GENERAL:
 			return false;
+		default:
+			return true;
 		}
 	}
 }
